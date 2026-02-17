@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>相框照片挑選器</title>
+    <style>
+        body { font-family: sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; background: #f5f5f5; }
+        .card { background: white; border-radius: 8px; padding: 30px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { margin-top: 0; color: #333; }
+        button { padding: 12px 24px; font-size: 16px; background: #1a73e8; color: white; border: none; border-radius: 4px; cursor: pointer; margin: 10px 0; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        #status { margin: 20px 0; padding: 10px; background: #e8f0fe; border-radius: 4px; white-space: pre-wrap; }
+        #result { margin-top: 20px; padding: 10px; background: #e6f4ea; border-left: 4px solid #34a853; word-break: break-all; }
+        .error { background: #fce8e8; border-left-color: #d93025; }
+        a { color: #1a73e8; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>🖼️ 挑選相框照片</h1>
+        <p>點擊下方按鈕開始挑選照片。完成後會自動更新你的數位相框。</p>
+        <button id="startBtn" onclick="startPicker()">開始挑選照片</button>
+        <div id="status"></div>
+        <div id="result"></div>
+    </div>
+
+    <script>
+        // 設定你的 Worker 網址（請改成你自己的）
+        const WORKER_URL = 'https://photo-frame-worker.sheng8213.workers.dev';
+
+        let sessionId = null;
+        let pollInterval = 2000; // 預設 2 秒，實際由 API 決定
+        let checkTimer = null;
+
+        function displayStatus(msg, isError = false) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = msg;
+            statusDiv.className = isError ? 'error' : '';
+        }
+
+        function displayResult(msg) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.textContent = msg;
+        }
+
+        async function startPicker() {
+            document.getElementById('startBtn').disabled = true;
+            displayStatus('正在建立挑選工作階段...');
+
+            try {
+                // 1. 呼叫 Worker 建立 session
+                const resp = await fetch(`${WORKER_URL}/api/picker/create-session`, {
+                    method: 'POST',
+                });
+                const data = await resp.json();
+
+                if (!resp.ok) {
+                    throw new Error(data.error || '建立失敗');
+                }
+
+                sessionId = data.sessionId;
+                pollInterval = data.pollInterval * 1000 || 2000; // 轉換為毫秒
+
+                displayStatus(`✅ 工作階段已建立。請在新分頁中挑選照片，然後回來等候。\n\n點擊下方連結開啟 Google 挑選器：`);
+                
+                // 顯示連結
+                const linkDiv = document.createElement('div');
+                linkDiv.innerHTML = `<a href="${data.pickerUri}" target="_blank">👉 點此開啟挑選器 👈</a>`;
+                document.getElementById('status').appendChild(linkDiv);
+
+                // 2. 開始輪詢檢查狀態
+                startPolling();
+            } catch (e) {
+                displayStatus(`❌ 錯誤：${e.message}`, true);
+                document.getElementById('startBtn').disabled = false;
+            }
+        }
+
+        function startPolling() {
+            if (!sessionId) return;
+            displayStatus('🔄 等待你完成挑選... (每 ' + (pollInterval/1000) + ' 秒檢查一次)');
+            checkTimer = setInterval(checkSession, pollInterval);
+        }
+
+        async function checkSession() {
+            try {
+                const resp = await fetch(`${WORKER_URL}/api/picker/check-session?sessionId=${sessionId}`);
+                const data = await resp.json();
+
+                if (!resp.ok) {
+                    throw new Error(data.error || '檢查失敗');
+                }
+
+                if (data.mediaItemsSet) {
+                    // 選擇已完成，停止輪詢，取得照片
+                    clearInterval(checkTimer);
+                    displayStatus('✅ 照片已選取，正在取得列表...');
+                    await getSelectedPhotos();
+                } else {
+                    // 尚未完成，繼續等待
+                    displayStatus('🔄 等待你完成挑選... (每 ' + (pollInterval/1000) + ' 秒檢查一次)');
+                }
+            } catch (e) {
+                displayStatus(`❌ 檢查時發生錯誤：${e.message}`, true);
+                clearInterval(checkTimer);
+                document.getElementById('startBtn').disabled = false;
+            }
+        }
+
+        async function getSelectedPhotos() {
+            try {
+                const resp = await fetch(`${WORKER_URL}/api/picker/get-selected?sessionId=${sessionId}`);
+                const data = await resp.json();
+
+                if (!resp.ok) {
+                    throw new Error(data.error || '取得照片失敗');
+                }
+
+                const count = data.photos.length;
+                displayResult(`✅ 成功取得 ${count} 張照片！你的相框已自動更新。\n\n照片列表已儲存至 KV，現在可以關閉此頁面。`);
+                displayStatus('🎉 完成！');
+                document.getElementById('startBtn').disabled = false;
+            } catch (e) {
+                displayStatus(`❌ 取得照片失敗：${e.message}`, true);
+                document.getElementById('startBtn').disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>
