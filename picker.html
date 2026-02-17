@@ -55,8 +55,10 @@
                 const data = await resp.json();
 
                 if (!resp.ok) {
-                    throw new Error(data.error || '建立失敗');
-                }
+    // 顯示完整的錯誤詳情（如果有 detail 欄位）
+    const errorMsg = data.detail ? `${data.error}: ${data.detail}` : (data.error || '建立失敗');
+    throw new Error(errorMsg);
+}
 
                 sessionId = data.sessionId;
                 pollInterval = data.pollInterval * 1000 || 2000; // 轉換為毫秒
